@@ -2,10 +2,12 @@ clear; close all; clc;
 
 %% Load Map 
 origImageMap = im2bw(imread("Image1.bmp"));
+
 resolution = 30;
 map = binaryOccupancyMap(~origImageMap, resolution);
 % 1 -> obstacle (black), 0 -> free (white)
 
+% In world coordinates
 start = [26 17 -pi/2];
 goal = [0.3 17 pi/2];
 
@@ -29,6 +31,8 @@ gridInflated = occupancyMatrix(inflatedMap);
 gridOriginal = occupancyMatrix(map);
 
 imgInfo = zeros(map.GridSize(1), map.GridSize(2), 3);
+
+% 3 matrices for every RGB
 R = ones(size(gridOriginal)); 
 G = ones(size(gridOriginal)); 
 B = ones(size(gridOriginal));
@@ -59,7 +63,7 @@ ss.StateBounds = [map.XWorldLimits; map.YWorldLimits; [-pi pi]];
 
 sv = validatorOccupancyMap(ss); 
 sv.Map = inflatedMap; 
-sv.ValidationDistance = 0.3; % frequency of "collision-checking"
+sv.ValidationDistance = 0.5; % frequency of "collision-checking"
 
 planner = plannerHybridAStar(sv);
 
@@ -76,5 +80,29 @@ show(planner);
 grid on;
 title('Hybrid A* Path Planning');
 
+%% Apply A*
 
+startGrid = world2grid(inflatedMap, [start(1) start(2)]);
+goalGrid = world2grid(inflatedMap, [goal(1) goal(2)]);
 
+aStar = aStarObj(gridInflated, startGrid, goalGrid);
+pathAstar = grid2world(inflatedMap,aStar.path);
+
+% Visualize the A* path on the inflated map
+figure
+show(inflatedMap);
+hold on;
+plot(pathAstar(:,1), pathAstar(:,2), 'g', 'LineWidth', 2);
+hold off;
+
+% plot A* on image normal + inflated
+
+figure;
+hold on;
+imshow(imgInfo, 'XData', [0 map.XWorldLimits(2)], 'YData', [0 map.YWorldLimits(2)]);
+plot(pathAstar(:,1), map.YWorldLimits(2).*ones(size(pathAstar,1))-pathAstar(:,2), 'g', 'LineWidth', 2);
+axis([0 map.XWorldLimits(2) 0 map.YWorldLimits(2)])
+axis on
+hold off;
+
+%% NLMPC
