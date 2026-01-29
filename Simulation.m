@@ -73,6 +73,7 @@ planner.AnalyticExpansionInterval = 20; % How often to try connecting directly t
 planner.InterpolationDistance = 0.1;
 
 [refPath, solnInfo] = plan(planner, start, goal);
+refPath = computeRefAngle(refPath.States, refPath.States(1,3));
 
 % Plot
 figure;
@@ -118,7 +119,7 @@ nu = 3;
 nlmpcController = nlmpc(nx,ny,nu); 
 Ts = 0.1;
 nlmpcController.Ts = Ts;
-p = 5;
+p = 8;
 c = 2;
 nlmpcController.PredictionHorizon = p; 
 nlmpcController.ControlHorizon = c; 
@@ -127,10 +128,12 @@ nlmpcController.ControlHorizon = c;
 nlmpcController.Model.StateFcn = @(x,u) FourWheelSteerDyn(x,u,Ts);
 nlmpcController.Model.IsContinuousTime = false;
 
-% weights
-nlmpcController.Weights.ManipulatedVariables = [1,1,1];
+% weights 
+% wheights MV has second component high because the 4WheelSteer doesnt take
+% into account vy to compute inverse kinematics
+nlmpcController.Weights.ManipulatedVariables = [30,50,1];
 nlmpcController.Weights.ManipulatedVariablesRate = [10,10,10];
-nlmpcController.Weights.OutputVariables = [500, 500, 50];
+nlmpcController.Weights.OutputVariables = [200, 100, 50];
 
 % x
 controller.MV(1).Max = 0.9;
@@ -147,11 +150,11 @@ controller.MV(2).RateMin = -0.2;
 % omega
 controller.MV(3).Max = pi/4;
 controller.MV(3).Min = -pi/4;
-controller.MV(3).RateMax = pi/4;
-controller.MV(3).RateMin = -pi/4;
+controller.MV(3).RateMax = pi/6;
+controller.MV(3).RateMin = -pi/6;
 
 % loop
-trajectory = refPath.States;
+trajectory = refPath;
 r = rateControl(1/Ts);
 
 trajectory(end+1:end+p,:) = repmat(trajectory(end,:),[p 1]);
@@ -175,9 +178,29 @@ for idx = 2:length(trajectory)-p
     pose(idx,:) = pose(idx-1,:) + vel' .* Ts;
 end
 
+pose = pose(1:(end-p),:);
+
 figure
 show(map);
 hold on
 plot(pose(:,1),pose(:,2));
 plot(trajectory(:,1),trajectory(:,2));
+danger = [263, 264, 325, 327, 360, 365];
+for i=1:length(danger)
+    plot(trajectory(danger(i),1),trajectory(danger(i),2),'Color','r','Marker','diamond')
+end
+grid on
 hold off
+
+figure
+hold on
+% Plot the trajectory's theta-coordinate over time
+plot(1:length(trajectory), trajectory(:,3), 'b', 'LineWidth', 2);
+xlabel('Time Step');
+ylabel('\theta Coordinate');
+title('Trajectory \theta Coordinate Over Time');
+% Finalize the trajectory visualization by plotting the robot's pose
+plot(1:length(pose), pose(:,3), 'r', 'LineWidth',2)
+legend('reference','actual angle')
+grid on;
+hold off;
