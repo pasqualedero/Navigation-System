@@ -63,7 +63,7 @@ ss.StateBounds = [map.XWorldLimits; map.YWorldLimits; [-pi pi]];
 
 sv = validatorOccupancyMap(ss); 
 sv.Map = inflatedMap; 
-sv.ValidationDistance = 0.5; % frequency of "collision-checking"
+sv.ValidationDistance = 0.5; % frequency of "collision-checking" in [m]
 
 planner = plannerHybridAStar(sv);
 
@@ -105,4 +105,79 @@ axis([0 map.XWorldLimits(2) 0 map.YWorldLimits(2)])
 axis on
 hold off;
 
+%% Model
+wheelRadius = 0.1; %[m]
+wheelDist = [0.3 0.25];
+vehicle = FourWheelSteering(wheelRadius, wheelDist);
+
 %% NLMPC
+nx = 3;
+ny = 3;
+nu = 3;
+
+nlmpcController = nlmpc(nx,ny,nu); 
+Ts = 0.1;
+nlmpcController.Ts = Ts;
+p = 5;
+c = 2;
+nlmpcController.PredictionHorizon = p; 
+nlmpcController.ControlHorizon = c; 
+
+% Define the state-space model for the NLMPC controller
+nlmpcController.Model.StateFcn = @(x,u) FourWheelSteerDyn(x,u,Ts);
+nlmpcController.Model.IsContinuousTime = false;
+
+% weights
+nlmpcController.Weights.ManipulatedVariables = [1,1,1];
+nlmpcController.Weights.ManipulatedVariablesRate = [10,10,10];
+nlmpcController.Weights.OutputVariables = [500, 500, 50];
+
+% x
+controller.MV(1).Max = 0.9;
+controller.MV(1).Min = -0.9;
+controller.MV(1).RateMax = 0.2;
+controller.MV(1).RateMin = -0.2;
+
+% y
+controller.MV(2).Max = 0.9;
+controller.MV(2).Min = -0.9;
+controller.MV(2).RateMax = 0.2;
+controller.MV(2).RateMin = -0.2;
+
+% omega
+controller.MV(3).Max = pi/4;
+controller.MV(3).Min = -pi/4;
+controller.MV(3).RateMax = pi/4;
+controller.MV(3).RateMin = -pi/4;
+
+% loop
+trajectory = refPath.States;
+r = rateControl(1/Ts);
+
+trajectory(end+1:end+p,:) = repmat(trajectory(end,:),[p 1]);
+
+% Initialize the pose array for storing the robot's position
+pose = zeros(length(trajectory),3);
+pose(1,:) = start; % Set the initial pose to the starting position
+u = zeros(length(trajectory),nu);
+
+wheelSpds = zeros(length(trajectory),2);
+steerAngFS = zeros(length(trajectory),2);
+
+for idx = 2:length(trajectory)-p
+    %Run the NLPMC
+    [u(idx,:),~,mpcinfo] = nlmpcmove(nlmpcController, pose(idx-1,:), u(idx-1,:), trajectory(idx:idx+p-1,:));
+    [wheelSpds(idx,:), steerAngFS(idx,:)] = inverseKinematicsFrontSteer(vehicle, u(idx,1), u(idx,3));
+    % If no noise, vel == u(idx,:)
+    velBody = forwardKinematics(vehicle,wheelSpds(idx,:),steerAngFS(idx,:));
+    vel = bodyToWorld(velBody,pose(idx-1,:));
+
+    pose(idx,:) = pose(idx-1,:) + vel' .* Ts;
+end
+
+figure
+show(map);
+hold on
+plot(pose(:,1),pose(:,2));
+plot(trajectory(:,1),trajectory(:,2));
+hold off
