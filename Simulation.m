@@ -111,13 +111,25 @@ wheelRadius = 0.1; %[m]
 wheelDist = [0.3 0.25];
 vehicle = FourWheelSteering(wheelRadius, wheelDist);
 
+%% Define tVec
+Ts = 0.1;
+SimTime = 60; %[s]
+tVec = 0:Ts:SimTime;
+
+s = linspace(0,1,size(refPath,1));
+s_interp = linspace(0,1,numel(tVec));
+x_ref = interp1(s, refPath(:,1), s_interp, 'linear');
+y_ref = interp1(s, refPath(:,2), s_interp, 'linear');
+theta_ref = interp1(s, refPath(:,3), s_interp, 'linear');
+
+ref = [x_ref(:), y_ref(:), theta_ref(:)];
+
 %% NLMPC
 nx = 3;
 ny = 3;
 nu = 3;
 
 nlmpcController = nlmpc(nx,ny,nu); 
-Ts = 0.1;
 nlmpcController.Ts = Ts;
 p = 8;
 c = 2;
@@ -154,20 +166,20 @@ controller.MV(3).RateMax = pi/6;
 controller.MV(3).RateMin = -pi/6;
 
 % loop
-trajectory = refPath;
+trajectory = ref;
 r = rateControl(1/Ts);
 
 trajectory(end+1:end+p,:) = repmat(trajectory(end,:),[p 1]);
 
 % Initialize the pose array for storing the robot's position
-pose = zeros(length(trajectory),3);
+pose = zeros(length(tVec),3);
 pose(1,:) = start; % Set the initial pose to the starting position
-u = zeros(length(trajectory),nu);
+u = zeros(length(tVec),nu);
 
-wheelSpds = zeros(length(trajectory),2);
-steerAngFS = zeros(length(trajectory),2);
+wheelSpds = zeros(length(tVec),2);
+steerAngFS = zeros(length(tVec),2);
 
-for idx = 2:length(trajectory)-p
+for idx = 2:length(tVec)
     %Run the NLPMC
     [u(idx,:),~,mpcinfo] = nlmpcmove(nlmpcController, pose(idx-1,:), u(idx-1,:), trajectory(idx:idx+p-1,:));
     [wheelSpds(idx,:), steerAngFS(idx,:)] = inverseKinematicsFrontSteer(vehicle, u(idx,1), u(idx,3));
@@ -178,17 +190,13 @@ for idx = 2:length(trajectory)-p
     pose(idx,:) = pose(idx-1,:) + vel' .* Ts;
 end
 
-pose = pose(1:(end-p),:);
+%% Plots (NLMPC)
 
 figure
 show(map);
 hold on
 plot(pose(:,1),pose(:,2));
 plot(trajectory(:,1),trajectory(:,2));
-danger = [263, 264, 325, 327, 360, 365];
-for i=1:length(danger)
-    plot(trajectory(danger(i),1),trajectory(danger(i),2),'Color','r','Marker','diamond')
-end
 grid on
 hold off
 
@@ -204,3 +212,33 @@ plot(1:length(pose), pose(:,3), 'r', 'LineWidth',2)
 legend('reference','actual angle')
 grid on;
 hold off;
+
+figure
+hold on
+subplot(3,3,[1 2 3])
+plot(tVec,steerAngFS(:,1),'LineWidth',2);
+title("Front Steering Angle")
+ylabel('[rad]')
+grid on
+hold off
+
+subplot(3,3,[4 5 6])
+hold on
+plot(tVec,wheelSpds(:,1),'LineWidth',2,'Color','r');
+plot(tVec,wheelSpds(:,2),'LineWidth',2,'Color','b');
+legend('Front Wheel','Rear Wheel')
+ylabel('[rad/s]')
+title('Wheel Speeds')
+grid on
+hold off
+
+subplot(3,3,[7,8,9])
+hold on
+plot(tVec,u(:,1),'LineWidth',2,'Color','r')
+plot(tVec,u(:,2),'LineWidth',2,'Color','b')
+legend('V_x','V_y')
+ylabel('[m/s]')
+title('Control Input')
+grid on
+hold off
+
