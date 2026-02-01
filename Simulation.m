@@ -1,6 +1,6 @@
 clear; close all; clc;
 
-%% Load Map 
+%% Load Map
 origImageMap = im2bw(imread("Image1.bmp"));
 
 resolution = 30;
@@ -33,21 +33,21 @@ gridOriginal = occupancyMatrix(map);
 imgInfo = zeros(map.GridSize(1), map.GridSize(2), 3);
 
 % 3 matrices for every RGB
-R = ones(size(gridOriginal)); 
-G = ones(size(gridOriginal)); 
+R = ones(size(gridOriginal));
+G = ones(size(gridOriginal));
 B = ones(size(gridOriginal));
 
-maskObstacle = (gridOriginal == 1);           
+maskObstacle = (gridOriginal == 1);
 maskInflated = (gridInflated == 1) & ~gridOriginal;
 
 % inflated areas are red
-R(maskInflated) = 1; 
-G(maskInflated) = 0; 
+R(maskInflated) = 1;
+G(maskInflated) = 0;
 B(maskInflated) = 0;
 
 % obsttacle areas are black
-R(maskObstacle) = 0; 
-G(maskObstacle) = 0; 
+R(maskObstacle) = 0;
+G(maskObstacle) = 0;
 B(maskObstacle) = 0;
 
 imgInfo(:,:,1) = R;
@@ -61,8 +61,8 @@ imshow(imgInfo)
 ss = stateSpaceSE2;
 ss.StateBounds = [map.XWorldLimits; map.YWorldLimits; [-pi pi]];
 
-sv = validatorOccupancyMap(ss); 
-sv.Map = inflatedMap; 
+sv = validatorOccupancyMap(ss);
+sv.Map = inflatedMap;
 sv.ValidationDistance = 0.5; % frequency of "collision-checking" in [m]
 
 planner = plannerHybridAStar(sv);
@@ -77,7 +77,7 @@ refPath = computeRefAngle(refPath.States, refPath.States(1,3));
 
 % Plot
 figure;
-show(planner); 
+show(planner);
 grid on;
 title('Hybrid A* Path Planning');
 
@@ -129,18 +129,18 @@ nx = 3;
 ny = 3;
 nu = 3;
 
-nlmpcController = nlmpc(nx,ny,nu); 
+nlmpcController = nlmpc(nx,ny,nu);
 nlmpcController.Ts = Ts;
 p = 8;
 c = 2;
-nlmpcController.PredictionHorizon = p; 
-nlmpcController.ControlHorizon = c; 
+nlmpcController.PredictionHorizon = p;
+nlmpcController.ControlHorizon = c;
 
 % Define the state-space model for the NLMPC controller
 nlmpcController.Model.StateFcn = @(x,u) FourWheelSteerDyn(x,u,Ts);
 nlmpcController.Model.IsContinuousTime = false;
 
-% weights 
+% weights
 % wheights MV has second component high because the 4WheelSteer doesnt take
 % into account vy to compute inverse kinematics
 nlmpcController.Weights.ManipulatedVariables = [30,50,1];
@@ -148,22 +148,22 @@ nlmpcController.Weights.ManipulatedVariablesRate = [10,10,10];
 nlmpcController.Weights.OutputVariables = [200, 100, 50];
 
 % x
-controller.MV(1).Max = 0.9;
-controller.MV(1).Min = -0.9;
-controller.MV(1).RateMax = 0.2;
-controller.MV(1).RateMin = -0.2;
+nlmpcController.MV(1).Max = 0.9;
+nlmpcController.MV(1).Min = -0.9;
+nlmpcController.MV(1).RateMax = 0.2;
+nlmpcController.MV(1).RateMin = -0.2;
 
 % y
-controller.MV(2).Max = 0.9;
-controller.MV(2).Min = -0.9;
-controller.MV(2).RateMax = 0.2;
-controller.MV(2).RateMin = -0.2;
+nlmpcController.MV(2).Max = 0.9;
+nlmpcController.MV(2).Min = -0.9;
+nlmpcController.MV(2).RateMax = 0.2;
+nlmpcController.MV(2).RateMin = -0.2;
 
 % omega
-controller.MV(3).Max = pi/4;
-controller.MV(3).Min = -pi/4;
-controller.MV(3).RateMax = pi/6;
-controller.MV(3).RateMin = -pi/6;
+nlmpcController.MV(3).Max = pi/4;
+nlmpcController.MV(3).Min = -pi/4;
+nlmpcController.MV(3).RateMax = pi/6;
+nlmpcController.MV(3).RateMin = -pi/6;
 
 % loop
 trajectory = ref;
@@ -241,4 +241,147 @@ ylabel('[m/s]')
 title('Control Input')
 grid on
 hold off
+
+%% Lidar Sensor
+lidar = rangeSensor;
+lidar.Range = [0 5];                 
+lidar.HorizontalAngle = [-pi/2, pi/2];
+lidar.HorizontalAngleResolution = pi/50;
+
+%% Pure Pursuit Controller
+waypoints = ref(1:10:end,1:2);
+controller = controllerPurePursuit;
+controller.Waypoints = waypoints;
+controller.LookaheadDistance = 1;
+controller.DesiredLinearVelocity = 0.75;
+controller.MaxAngularVelocity = 1.5;
+
+%% VFH
+vfh = controllerVFH;
+vfh.DistanceLimits = [0.05 5];
+vfh.NumAngularSectors = 36;
+vfh.HistogramThresholds = [4 8];
+vfh.RobotRadius = .2;
+vfh.SafetyDistance = .2;
+vfh.MinTurningRadius = 0.75;
+
+%% Create a new obstacle (rectangle) in position (3,7)
+p1 = world2grid(map, [3 7]);
+p2 = world2grid(map, [5 8]);
+
+rows = sort([p1(1), p2(1)]);
+cols = sort([p1(2), p2(2)]);
+
+mapObstacle = copy(map);
+[R_grid, C_grid] = meshgrid(rows(1):rows(2), cols(1):cols(2));
+setOccupancy(mapObstacle, [R_grid(:), C_grid(:)], 1, 'grid');
+
+figure;
+hold on
+show(mapObstacle);
+plot(pose(:,1),pose(:,2));
+plot(trajectory(:,1),trajectory(:,2));
+title('Map with New Obstacle Added');
+hold off
+
+%% Vizualizer
+
+%% Initialize the pose array for storing the robot's position
+posePP = zeros(length(tVec),3);
+posePP(1,:) = start; 
+uPP = zeros(length(tVec),nu); %[vx,vy,omega]
+
+wheelSpdsPP = zeros(length(tVec),2);
+steerAngFSPP = zeros(length(tVec),2);
+
+%% Loop
+idxPose = 2;
+idxRef = 2;
+for i = 2:length(tVec)
+
+    curPose = posePP(idxPose-1,:);
+    [ranges, angles] = lidar(curPose,mapObstacle);
+    scan = lidarScan(ranges, angles);
+
+    targetDir = atan2(trajectory(idxRef+p-1,2)-curPose(2),trajectory(idxRef+p-1,1)-curPose(1)) - curPose(3);
+
+    vfhDirection = vfh(scan.Ranges, scan.Angles, targetDir);
+    
+    if (~isnan(vfhDirection) && abs(vfhDirection-targetDir) > 0.1) 
+        obst = true;
+        while obst
+            % Get the sensor readings
+            curPose = posePP(idxPose-1,:);
+            [ranges, angles] = lidar(curPose,mapObstacle);
+            scan = lidarScan(ranges, angles);
+
+            % Run the path following and obstacle avoidance algorithms
+            [vRef,wRef,lookAheadPt] = controller(curPose);
+            uPP(idxPose,:) = vRef';
+            targetDir = atan2(lookAheadPt(2)-curPose(2),lookAheadPt(1)-curPose(1)) - curPose(3);
+            steerDir = vfh(scan.Ranges,scan.Angles,targetDir);
+            if ~isnan(steerDir) && abs(steerDir-targetDir) > 0.1
+                wRef = steerDir;
+            end
+
+            % Control the robot
+            % velB = [vRef * cos(wRef); vRef * sin(wRef); wRef];                   % Body velocities [vx;vy;w]
+            % vel = bodyToWorld(velB,curPose);  % Convert from body to world
+            [wheelSpdsPP(idxPose,:), steerAngFSPP(idxPose,:)] = inverseKinematicsFrontSteer(vehicle, vRef, wRef);
+            velB = forwardKinematics(vehicle,wheelSpdsPP(idxPose,:),steerAngFSPP(idxPose,:));
+            vel = bodyToWorld(velB, curPose);
+
+            % Perform forward discrete integration step
+            posePP(idxPose,:) = curPose + vel'*Ts;
+
+            % Update
+            idxPose = idxPose+1;
+           
+            % Check
+            [distMin, idxMin] = getClosestPointIndex(trajectory(idxRef:end,:), curPose);
+            if distMin < 0.001 %[m]
+                obst = false;
+                idxRef = idxMin+1;
+            end
+        end
+        
+    end
+
+    %Run the NLPMC
+    [uPP(idxPose,:),~,mpcinfo] = nlmpcmove(nlmpcController, posePP(idxPose-1,:), uPP(idxPose-1,:), trajectory(idxRef:idxRef+p-1,:));
+    [wheelSpdsPP(idxPose,:), steerAngFSPP(idxPose,:)] = inverseKinematicsFrontSteer(vehicle, uPP(idxPose,1), uPP(idxPose,3));
+    % If no noise, vel == u(idx,:)
+    velBody = forwardKinematics(vehicle,wheelSpdsPP(idxPose,:),steerAngFSPP(idxPose,:));
+    vel = bodyToWorld(velBody,posePP(idxPose-1,:));
+    posePP(idxPose,:) = posePP(idxPose-1,:) + vel' .* Ts;
+    % Update
+    idxRef = idxRef + 1;
+    idxPose = idxPose+1;
+
+end
+
+figure
+hold on
+show(mapObstacle);
+plot(posePP(:,1),posePP(:,2),'r.');
+plot(trajectory(:,1),trajectory(:,2))
+
+function [distMin, idx] = getClosestPointIndex(reference, queryPoint)
+    % reference: Nx3 matrix [x, y, theta]
+    % queryPoint: 1x2 [x, y] or 1x3 [x, y, theta] vector
+    
+    % 1. Extract only X and Y columns for distance calculation
+    refXY = reference(:, 1:2);
+    ptXY = queryPoint(1:2);
+    
+    % 2. Calculate Squared Euclidean Distance (Vectorized)
+    % (x_ref - x_pt)^2 + (y_ref - y_pt)^2
+    % We use squared distance because it is faster (no sqrt) and 
+    % preserves the minimum.
+    diffs = refXY - ptXY;
+    distSq = sum(diffs.^2, 2);
+    
+    % 3. Find the index of the minimum distance
+    [distMin, idx] = min(distSq);
+end
 
