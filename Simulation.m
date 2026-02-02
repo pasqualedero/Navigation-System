@@ -284,8 +284,6 @@ plot(trajectory(:,1),trajectory(:,2));
 title('Map with New Obstacle Added');
 hold off
 
-%% Vizualizer
-
 %% Initialize the pose array for storing the robot's position
 posePP = zeros(length(tVec),3);
 posePP(1,:) = start; 
@@ -294,12 +292,36 @@ uPP = zeros(length(tVec),nu); %[vx,vy,omega]
 wheelSpdsPP = zeros(length(tVec),2);
 steerAngFSPP = zeros(length(tVec),2);
 
+%% Plot
+idxOA = 1;
+idxMPC = 1;
+poseOA = zeros(600,2);
+poseMPC = zeros(600,2);
+
+figure
+hold on
+show(mapObstacle)
+robot = plot(posePP(1,1),posePP(1,2), 'Color','b','Marker','o','MarkerSize',10);
+wayP = plot(waypoints(:,1),waypoints(:,2),'r.','Color','r','Marker','x');
+lidarPlot = plot(nan, nan,'r.','MarkerSize', 8);
+module = 1;
+headX = posePP(1,1) + module * cos(posePP(1,3));
+headY = posePP(1,2) + module * sin(posePP(1,3));
+heading = plot([posePP(1,1) headX], [posePP(1,2) headY], 'LineStyle','-.','Color','black','LineWidth',2);
+avoidancePath = plot(nan, nan,'r.', 'Color','g');
+mpcPath = plot(nan, nan,'r.', 'Color','c');
+
 %% Loop
 idxPose = 2;
 idxRef = 2;
-for i = 2:length(tVec)
+for i = 2 : length(tVec)
 
+    % Target reached?
     curPose = posePP(idxPose-1,:);
+    if norm(curPose(1:2)-ref(end,1:2)) < 0.4
+        break;
+    end
+
     [ranges, angles] = lidar(curPose,mapObstacle);
     scan = lidarScan(ranges, angles);
 
@@ -333,9 +355,21 @@ for i = 2:length(tVec)
 
             % Perform forward discrete integration step
             posePP(idxPose,:) = curPose + vel'*Ts;
+            poseOA(idxOA,:) = posePP(idxPose,1:2);
 
-            % Update
+            % Update plot
+            set(robot, 'XData', posePP(idxPose,1), 'YData', posePP(idxPose,2));
+            headX = posePP(idxPose,1) + module * cos(posePP(idxPose,3));
+            headY = posePP(idxPose,2) + module * sin(posePP(idxPose,3));
+            set(heading, 'XData', [posePP(idxPose,1) headX], 'YData', [posePP(idxPose,2) headY]);
+            set(avoidancePath, 'XData', poseOA(1:idxOA,1), 'YData', poseOA(1:idxOA,2));
+            set(mpcPath, 'XData', poseMPC(1:idxMPC,1), 'YData', poseMPC(1:idxMPC,2))
+            drawnow limitrate;
+            waitfor(r);
+
+            % Update Pose index
             idxPose = idxPose+1;
+            idxOA = idxOA + 1;
            
             % Check
             [distMin, idxMin] = getClosestPointIndex(trajectory(idxRef:end,:), curPose);
@@ -354,10 +388,23 @@ for i = 2:length(tVec)
     velBody = forwardKinematics(vehicle,wheelSpdsPP(idxPose,:),steerAngFSPP(idxPose,:));
     vel = bodyToWorld(velBody,posePP(idxPose-1,:));
     posePP(idxPose,:) = posePP(idxPose-1,:) + vel' .* Ts;
+    poseMPC(idxMPC,:) =  posePP(idxPose,1:2);
+   
+    % Update plot
+    set(robot, 'XData', posePP(idxPose,1), 'YData', posePP(idxPose,2));
+    headX = posePP(idxPose,1) + module * cos(posePP(idxPose,3));
+    headY = posePP(idxPose,2) + module * sin(posePP(idxPose,3));
+    set(heading, 'XData', [posePP(idxPose,1) headX], 'YData', [posePP(idxPose,2) headY]);
+    set(avoidancePath, 'XData', poseOA(1:idxOA,1), 'YData', poseOA(1:idxOA,2));
+    set(mpcPath, 'XData', poseMPC(1:idxMPC,1), 'YData', poseMPC(1:idxMPC,2));    
+    drawnow limitrate;
+    waitfor(r);
+   
     % Update
     idxRef = idxRef + 1;
-    idxPose = idxPose+1;
-
+    idxPose = idxPose+1; 
+    idxMPC = idxMPC + 1;
+    
 end
 
 figure
@@ -384,4 +431,5 @@ function [distMin, idx] = getClosestPointIndex(reference, queryPoint)
     % 3. Find the index of the minimum distance
     [distMin, idx] = min(distSq);
 end
+
 
