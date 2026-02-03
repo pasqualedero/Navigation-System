@@ -242,7 +242,7 @@ title('Control Input')
 grid on
 hold off
 
-%% Lidar Sensor
+%% Lidar Sensor 
 lidar = rangeSensor;
 lidar.Range = [0 5];                 
 lidar.HorizontalAngle = [-pi/2, pi/2];
@@ -308,8 +308,9 @@ module = 1;
 headX = posePP(1,1) + module * cos(posePP(1,3));
 headY = posePP(1,2) + module * sin(posePP(1,3));
 heading = plot([posePP(1,1) headX], [posePP(1,2) headY], 'LineStyle','-.','Color','black','LineWidth',2);
+headingVFH = plot(nan,nan,'LineStyle','-.','Color','m');
 avoidancePath = plot(nan, nan,'r.', 'Color','g');
-mpcPath = plot(nan, nan,'r.', 'Color','c');
+mpcPath = plot(nan, nan,'r.', 'Color','b');
 
 %% Loop
 idxPose = 2;
@@ -327,9 +328,13 @@ for i = 2 : length(tVec)
 
     targetDir = atan2(trajectory(idxRef+p-1,2)-curPose(2),trajectory(idxRef+p-1,1)-curPose(1)) - curPose(3);
 
-    vfhDirection = vfh(scan.Ranges, scan.Angles, targetDir);
-    
-    if (~isnan(vfhDirection) && abs(vfhDirection-targetDir) > 0.1) 
+    steerDir = vfh(scan.Ranges, scan.Angles, targetDir);
+
+    headXV = curPose(1) + module * cos(steerDir+curPose(3));
+    headYV = curPose(2) + module * sin(steerDir+curPose(3));
+    set(headingVFH, 'XData', [curPose(1) headXV], 'YData', [curPose(2) headYV]);
+
+    if (~isnan(steerDir) && abs(angdiff(targetDir, steerDir)) > 0.1) 
         obst = true;
         while obst
             % Get the sensor readings
@@ -342,9 +347,10 @@ for i = 2 : length(tVec)
             uPP(idxPose,:) = vRef';
             targetDir = atan2(lookAheadPt(2)-curPose(2),lookAheadPt(1)-curPose(1)) - curPose(3);
             steerDir = vfh(scan.Ranges,scan.Angles,targetDir);
-            if ~isnan(steerDir) && abs(steerDir-targetDir) > 0.1
-                wRef = steerDir;
+            if ~isnan(steerDir) && abs(angdiff(targetDir, steerDir)) > 0.1
+                wRef = 1 * steerDir;
             end
+            disp(abs(angdiff(targetDir, steerDir)))
 
             % Control the robot
             % velB = [vRef * cos(wRef); vRef * sin(wRef); wRef];                   % Body velocities [vx;vy;w]
@@ -358,6 +364,9 @@ for i = 2 : length(tVec)
             poseOA(idxOA,:) = posePP(idxPose,1:2);
 
             % Update plot
+            headXV = curPose(1) + module * cos(steerDir+curPose(3));
+            headYV = curPose(2) + module * sin(steerDir+curPose(3));
+            set(headingVFH, 'XData', [curPose(1) headXV], 'YData', [curPose(2) headYV]);
             set(robot, 'XData', posePP(idxPose,1), 'YData', posePP(idxPose,2));
             headX = posePP(idxPose,1) + module * cos(posePP(idxPose,3));
             headY = posePP(idxPose,2) + module * sin(posePP(idxPose,3));
@@ -373,9 +382,9 @@ for i = 2 : length(tVec)
            
             % Check
             [distMin, idxMin] = getClosestPointIndex(trajectory(idxRef:end,:), curPose);
-            if distMin < 0.001 %[m]
+            if ~isnan(steerDir) && abs(angdiff(targetDir, steerDir)) <= 0.1
                 obst = false;
-                idxRef = idxMin+1;
+                idxRef = idxRef+idxMin;
             end
         end
         
@@ -426,7 +435,7 @@ function [distMin, idx] = getClosestPointIndex(reference, queryPoint)
     % We use squared distance because it is faster (no sqrt) and 
     % preserves the minimum.
     diffs = refXY - ptXY;
-    distSq = sum(diffs.^2, 2);
+    distSq = sqrt(sum(diffs.^2, 2));
     
     % 3. Find the index of the minimum distance
     [distMin, idx] = min(distSq);
