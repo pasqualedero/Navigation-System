@@ -242,9 +242,12 @@ title('Control Input')
 grid on
 hold off
 
+disp('Press any key to continue')
+waitforbuttonpress
+
 %% Lidar Sensor 
 lidar = rangeSensor;
-lidar.Range = [0 5];                 
+lidar.Range = [0 5.5];                 
 lidar.HorizontalAngle = [-pi/2, pi/2];
 lidar.HorizontalAngleResolution = pi/50;
 
@@ -258,9 +261,9 @@ controller.MaxAngularVelocity = 1.5;
 
 %% VFH
 vfh = controllerVFH;
-vfh.DistanceLimits = [0.05 5];
+vfh.DistanceLimits = [1 5.5];
 vfh.NumAngularSectors = 36;
-vfh.HistogramThresholds = [4 8];
+vfh.HistogramThresholds = [3.5 8];
 vfh.RobotRadius = .2;
 vfh.SafetyDistance = .2;
 vfh.MinTurningRadius = 0.75;
@@ -374,7 +377,7 @@ for i = 2 : length(tVec)
             set(avoidancePath, 'XData', poseOA(1:idxOA,1), 'YData', poseOA(1:idxOA,2));
             set(mpcPath, 'XData', poseMPC(1:idxMPC,1), 'YData', poseMPC(1:idxMPC,2))
             drawnow limitrate;
-            waitfor(r);
+            % waitfor(r);
 
             % Update Pose index
             idxPose = idxPose+1;
@@ -382,7 +385,7 @@ for i = 2 : length(tVec)
            
             % Check
             [distMin, idxMin] = getClosestPointIndex(trajectory(idxRef:end,:), curPose);
-            if ~isnan(steerDir) && abs(angdiff(targetDir, steerDir)) <= 0.1
+            if ~isnan(steerDir) && abs(angdiff(targetDir, steerDir)) <= 0.1 && distMin < 0.1
                 obst = false;
                 idxRef = idxRef+idxMin;
             end
@@ -407,7 +410,7 @@ for i = 2 : length(tVec)
     set(avoidancePath, 'XData', poseOA(1:idxOA,1), 'YData', poseOA(1:idxOA,2));
     set(mpcPath, 'XData', poseMPC(1:idxMPC,1), 'YData', poseMPC(1:idxMPC,2));    
     drawnow limitrate;
-    waitfor(r);
+    % waitfor(r);
    
     % Update
     idxRef = idxRef + 1;
