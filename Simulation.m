@@ -514,20 +514,21 @@ uEFK = zeros(length(tVec), 3); % [vx, vy, omega]
 disp('EKF-SLAM Initialized. Starting Simulation Loop...');
 
 %3. Main Simulation Loop
+
+filter = EkfSlam(start', length(landmarks), P, Q, R);
+
 for idx = 2:length(tVec)
     
     % --- A. SENSE (Measurement) ---
-    % Simulate Lidar/Camera seeing landmarks from *Ground Truth* pose (k-1)
     observations = simulateLandmarkObservations(trueStates(idx-1, :)', landmarks, R);
     
     % --- B. UPDATE (Correction) ---
-    % Correct the predicted estimate using measurements
     [stateEstimate, P, ~] = updateLandmarks(stateEstimate, P, observations, R, numLandmarks);
-    Pcell{idx} = P;
+    filter.correct(observations);
+    Pcell{idx} = filter.Sigma;
 
     % Store the corrected posterior estimate
-    estimatedStates(idx-1, :) = stateEstimate'; 
-    currentPoseEst = stateEstimate(1:3); % Extract robot pose for controller
+    currentPoseEst = filter.mu(1:3);
 
     % --- C. PLAN (Control) ---
     % Compute NMPC control action based on *Estimated* pose
@@ -547,11 +548,10 @@ for idx = 2:length(tVec)
     
     % --- E. PREDICT (State Propagation) ---
     % Predict next state (k) using Motion Model
-    [stateEstimate, F_x] = motionModelSLAM(stateEstimate, uEFK(idx, :)', Ts, numLandmarks);
-    P = F_x * P * F_x' + Q;
+    filter.predict(uEFK(idx,:), Ts);
     
     % (Optional) Store the predicted prior for the next loop visualization
-    estimatedStates(idx, :) = stateEstimate';
+    estimatedStates(idx, :) = filter.mu';
 end
 
 disp('Simulation Complete.');
