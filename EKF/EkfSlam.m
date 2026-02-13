@@ -21,7 +21,6 @@ classdef EkfSlam < handle
         end
 
         function predict(obj, u, Ts)
-            % PREDICT STEP: Propagates state using Ackermann Motion Model
 
             xr = obj.mu(1); yr = obj.mu(2); th = obj.mu(3);
             vx = u(1); vy = u(2); w = u(3);

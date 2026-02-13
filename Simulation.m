@@ -179,26 +179,41 @@ u = zeros(length(tVec),nu);
 wheelSpds = zeros(length(tVec),2);
 steerAngFS = zeros(length(tVec),2);
 
+% Dynamic Plot
+figure
+show(map)
+grid on
+hold on
+robotMpc = plot(pose(1,1),pose(1,2), 'Color','r','Marker','.','MarkerSize',33, 'MarkerEdgeColor','auto');
+module = 1;
+headXmpc = pose(1,1) + module * cos(pose(1,3));
+headYmpc = pose(1,2) + module * sin(pose(1,3));
+headingMpc = plot([pose(1,1) headXmpc], [pose(1,2) headYmpc], 'LineStyle','-.','Color','black','LineWidth',2);
+mpcPath = plot(nan, nan,'r.', 'Color','b');
+plot(trajectory(:,1),trajectory(:,2), 'LineStyle','--');
+
 for idx = 2:length(tVec)
-    %Run the NLPMC
+
+    % Compute input u(t)
     [u(idx,:),~,mpcinfo] = nlmpcmove(nlmpcController, pose(idx-1,:), u(idx-1,:), trajectory(idx:idx+p-1,:));
+    
+    % Apply u(t)
     [wheelSpds(idx,:), steerAngFS(idx,:)] = inverseKinematicsFrontSteer(vehicle, u(idx,1), u(idx,3));
-    % If no noise, vel == u(idx,:)
     velBody = forwardKinematics(vehicle,wheelSpds(idx,:),steerAngFS(idx,:));
     vel = bodyToWorld(velBody,pose(idx-1,:));
-
     pose(idx,:) = pose(idx-1,:) + vel' .* Ts;
+
+    % Update plots
+    set(robotMpc, 'XData', pose(idx,1), 'YData', pose(idx,2));
+    headXmpc = pose(idx,1) + module * cos(pose(idx,3));
+    headYmpc = pose(idx,2) + module * sin(pose(idx,3));
+    set(headingMpc, 'XData', [pose(idx,1) headXmpc], 'YData', [pose(idx,2) headYmpc]);
+    set(mpcPath, 'XData', pose(1:idx,1), 'YData', pose(1:idx,2));    
+    drawnow limitrate;
+    %waitfor(r);
 end
 
 %% Plots (NLMPC)
-
-figure
-show(map);
-hold on
-plot(pose(:,1),pose(:,2));
-plot(trajectory(:,1),trajectory(:,2));
-grid on
-hold off
 
 figure
 hold on
@@ -461,7 +476,10 @@ landmarks = [
     24.8833,8.0500;
     24.8833,12.0500;    
     2.4500,14.4833;
-    3.8833,11.1167];
+    3.8833,11.1167;
+    1.3167,18.0167;
+    3.8833,10.0833;
+    1.0833,10.7500];
 
 % % Motion model
 % syms xr yr thetar vx vy omega T real
@@ -494,15 +512,18 @@ trueStates(1, :) = start;
 % Initialize landmarks as NaN (unknown)
 stateEstimate = [start(:); NaN(2 * numLandmarks, 1)]; 
 
-% Storage for History (Pre-allocate for speed)
-estimatedStates = NaN(length(tVec), length(stateEstimate));
-estimatedStates(1, :) = stateEstimate';
+% Storage for History 
+correctedStates = NaN(length(tVec), length(stateEstimate));
+correctedStates(1, :) = stateEstimate';
+
+predictedStates = NaN(length(tVec), length(stateEstimate));
+predictedStates(1, :) = stateEstimate';
 
 % Covariance Matrices
 P = eye(3 + 2 * numLandmarks) * 1e-5; 
 P(1:3, 1:3) = eye(3) * 0.1; % Robot pose uncertainty
 
-Q = blkdiag(diag([0.005, 0.005, 0.0005]), zeros(2 * numLandmarks)); % Process Noise
+Q = blkdiag(diag([0.0005, 0.0005, 0.0005]), zeros(2 * numLandmarks)); % Process Noise
 R = diag([0.05, 0.01]); % Measurement Noise (Range, Bearing)
 
 Pcell = cell(1,length(tVec));
@@ -513,90 +534,108 @@ uEFK = zeros(length(tVec), 3); % [vx, vy, omega]
 
 disp('EKF-SLAM Initialized. Starting Simulation Loop...');
 
-%3. Main Simulation Loop
+% Plots
+figure
+show(map)
+grid on
+hold on
+plot(landmarks(:,1), landmarks(:,2),'LineStyle','none','Color','r','Marker','o','MarkerFaceColor','auto');
+robotEkf = plot(trueStates(1,1),trueStates(1,2), 'Color','r','Marker','.','MarkerSize',20, 'MarkerEdgeColor','auto');
+module = 1;
+headXEkf = trueStates(1,1) + module * cos(trueStates(1,3));
+headYEkf = trueStates(1,2) + module * sin(trueStates(1,3));
+headingEkf = plot([trueStates(1,1) headXEkf], [trueStates(1,2) headYEkf], 'LineStyle','-.','Color','black','LineWidth',2);
+mpcPathEkf = plot(nan, nan,'r.', 'Color','b');
+plotPred = plot(predictedStates(1,1), predictedStates(1,2), 'Color','m','LineStyle',':','LineWidth',2);
+plotCorr = plot(correctedStates(1,1), correctedStates(1,2), 'Color','g','LineStyle','--','LineWidth',2);
+[XDataCov, YDataCov] = plotCovariance(stateEstimate, P);
+plotCov = plot(XDataCov, YDataCov, 'Color','black','LineWidth',1.5);
+%plot(trajectory(:,1),trajectory(:,2), 'LineStyle','-');
 
+
+% Main Simulation Loop
 filter = EkfSlam(start', length(landmarks), P, Q, R);
 
 for idx = 2:length(tVec)
-    
-    % --- A. SENSE (Measurement) ---
-    observations = simulateLandmarkObservations(trueStates(idx-1, :)', landmarks, R);
-    
-    % --- B. UPDATE (Correction) ---
-    [stateEstimate, P, ~] = updateLandmarks(stateEstimate, P, observations, R, numLandmarks);
-    filter.correct(observations);
-    Pcell{idx} = filter.Sigma;
+    % Where am I before applying u(t)?
+    currentPoseEst = correctedStates(idx-1, 1:3);
 
-    % Store the corrected posterior estimate
-    currentPoseEst = filter.mu(1:3);
-
-    % --- C. PLAN (Control) ---
-    % Compute NMPC control action based on *Estimated* pose
-    % Note: uEFK(idx-1,:) is the previous control action
-    %Run the NLPMC
+    % Compute u(t)
     [u_opt, ~, mpcinfo] = nlmpcmove(nlmpcController, currentPoseEst, uEFK(idx-1, :)', trajectory(idx:idx+p-1, :));
-    uEFK(idx, :) = u_opt';
-    
-    % --- D. ACT (Ground Truth Simulation) ---
-    % Apply control to the real robot (Kinematics)
+    uEFK(idx, :) = u_opt';    
+
+    % Prediction: store it
+    filter.predict(uEFK(idx,:), Ts);
+    predictedStates(idx,:) = filter.mu';
+
+    % Update prediction plot
+    set(plotPred, 'XData', predictedStates(1:idx,1), 'YData', predictedStates(1:idx,2));
+    waitfor(r);
+
+    % Apply u(t)
     [wheelSpds, steerAng] = inverseKinematicsFrontSteer(vehicle, uEFK(idx, 1), uEFK(idx, 3));
     velBody = forwardKinematics(vehicle, wheelSpds, steerAng);
     
-    % Convert body velocity to world frame (using True Heading)
     velWorld = bodyToWorld(velBody, trueStates(idx-1, :));
     trueStates(idx, :) = trueStates(idx-1, :) + velWorld' * Ts;
     
-    % --- E. PREDICT (State Propagation) ---
-    % Predict next state (k) using Motion Model
-    filter.predict(uEFK(idx,:), Ts);
-    
-    % (Optional) Store the predicted prior for the next loop visualization
-    estimatedStates(idx, :) = filter.mu';
+    % Measure
+    observations = simulateLandmarkObservations(trueStates(idx, :)', landmarks, R);
+
+    % Correct
+    filter.correct(observations);
+    Pcell{idx} = filter.Sigma;
+    correctedStates(idx, :) = filter.mu';
+
+    % Update plots
+    set(robotEkf, 'XData', trueStates(idx,1), 'YData', trueStates(idx,2));
+    headXEkf = trueStates(idx,1) + module * cos(trueStates(idx,3));
+    headYEkf = trueStates(idx,2) + module * sin(trueStates(idx,3));
+    set(headingEkf, 'XData', [trueStates(idx,1) headXEkf], 'YData', [trueStates(idx,2) headYEkf]);
+    set(mpcPathEkf, 'XData', trueStates(1:idx,1), 'YData', trueStates(1:idx,2)); 
+    set(plotCorr, 'XData', correctedStates(1:idx,1), 'YData', correctedStates(1:idx,2));
+    [XDataCov, YDataCov] = plotCovariance(trueStates(idx,:), filter.Sigma);
+    set(plotCov, 'XData', XDataCov, 'YData', YDataCov);
+    landmarksEst = filter.getMap;
+    landmarksLoc = plot(landmarksEst(:,1),landmarksEst(:,2), 'LineStyle','none','Marker','x','Color','r','LineWidth',3);
+    drawnow %limitrate;
+    %waitfor(r);
 end
+legend([plotCorr, plotPred, robotEkf, landmarksLoc], ...
+    {'Estimated Path (EKF)', 'Predicted Path', 'True Robot Position', 'Landmarks Est.'});
+hold off;
 
 disp('Simulation Complete.');
 
-figure
-show(map);
-hold on
-plot(estimatedStates(:,1),estimatedStates(:,2))
-plot(trueStates(:,1),trueStates(:,2))
-plot(landmarks(:,1), landmarks(:,2),'LineStyle','none','Color','r','Marker','o','MarkerFaceColor','auto');
-grid on;
-hold off
-
+% Compute trace of Covariance Matrices and norm of estimation error for the robot's pose
 traces = zeros(1,length(Pcell));
+estErrors = zeros(1,length(Pcell));
 for i=1:length(Pcell)
     mat = Pcell{i};
     traccia = trace(mat);
     traces(1,i) = traccia;
+
+    estError = norm(correctedStates(i,1:3)-trueStates(i,:),2);
+    estErrors(i) = estError; 
 end
 
 figure
 hold on
+subplot(2,2,[1 2])
+title("Trace of Covariance Matrix P")
 plot(1:length(tVec),traces(1,:), 'LineWidth', 3)
+xlabel('N° of iterations')
+ylabel('Trace of P')
+grid on
+
+subplot(2,2,[3 4])
+title('Norm of state Error')
+plot(1:length(tVec),estErrors(1,:), 'LineWidth', 3)
+xlabel('N° of iterations')
+ylabel('Norm Value')
 grid on
 hold off
 
-% 4. Helper Functions (Optimized EKF Logic)
-
-function xk1 = discreteDynamics(xk, u, dt)
-    % Standard discrete kinematics for NMPC internal model
-    theta = xk(3); 
-    M = [cos(theta), -sin(theta), 0; 
-         sin(theta),  cos(theta), 0; 
-         0,           0,          1];
-    xk1 = xk + M * u * dt;
-end
-
-function [xNext,Fx]=motionModelSLAM(x,u,Ts,numLandmarks)
-xr=x(1); yr=x(2); th=x(3); vx=u(1); vy=u(2); w=u(3);
-dx=cos(th)*vx - sin(th)*vy; dy=sin(th)*vx + cos(th)*vy; dth=w;
-xr=xr+dx*Ts; yr=yr+dy*Ts; th=th+dth*Ts; xNext=x; xNext(1:3)=[xr;yr;th];
-Fx=eye(3+2*numLandmarks);
-Fx(1,3)=(-sin(th)*vx - cos(th)*vy)*Ts;
-Fx(2,3)=( cos(th)*vx - sin(th)*vy)*Ts;
-end
 
 function observations = simulateLandmarkObservations(truePose, landmarks, R)
     % Simulates sensor data: Returns [ID, Range, Bearing] for visible landmarks
@@ -618,52 +657,15 @@ function observations = simulateLandmarkObservations(truePose, landmarks, R)
     end
 end
 
-function [x, P, K] = updateLandmarks(x, P, observations, R, numLandmarks)
-    % EKF Update Step: Corrects state based on observations
-    K = []; % Kalman Gain placeholder
-    
-    % Helper for angle wrapping
-    wrapToPi = @(a) atan2(sin(a), cos(a));
-
-    for i = 1:size(observations, 1)
-        lmID = observations(i, 1); 
-        r = observations(i, 2); 
-        b = observations(i, 3);
-        
-        % Indices for this landmark in the state vector
-        idx = 3 + (2*lmID - 1) : 3 + (2*lmID);
-        
-        % 1. Initialization: If landmark is unknown (NaN), initialize it
-        if isnan(x(idx(1)))
-            x(idx) = x(1:2) + r * [cos(b + x(3)); sin(b + x(3))];
-        end
-        
-        % 2. Expected Measurement (h(x))
-        dx = x(idx(1)) - x(1); 
-        dy = x(idx(2)) - x(2); 
-        q = dx^2 + dy^2;
-        r_pred = sqrt(q); 
-        b_pred = atan2(dy, dx) - x(3);
-        z_pred = [r_pred; wrapToPi(b_pred)];
-        
-        % 3. Jacobian H (Measurement Model)
-        H = zeros(2, 3 + 2 * numLandmarks);
-        % Derivative w.r.t Robot State [x, y, theta]
-        H(1:2, 1:3) = [-dx/r_pred, -dy/r_pred, 0; 
-                        dy/q,      -dx/q,     -1];
-        % Derivative w.r.t Landmark State [Lx, Ly]
-        H(1:2, idx) = [ dx/r_pred,  dy/r_pred; 
-                       -dy/q,       dx/q];
-        
-        % 4. Kalman Update
-        z_meas = [r; b]; 
-        y = z_meas - z_pred; 
-        y(2) = wrapToPi(y(2)); % Wrap angle residual
-        
-        S = H * P * H' + R; 
-        K = P * H' / S;
-        
-        x = x + K * y; 
-        P = (eye(size(P)) - K * H) * P;
-    end
+%% Funzione per visualizzare la covarianza
+function [XData, YData] = plotCovariance(stateEstimate, P)
+    % Ellissi di covarianza per la posizione del robot
+    posCov = P(1:2, 1:2);
+    [eigVec, eigVal] = eig(posCov);
+    angle = atan2(eigVec(2, 1), eigVec(1, 1));
+    radii = 10*sqrt(diag(eigVal));
+    theta = linspace(0, 2 * pi, 100);
+    ellipse = [cos(theta); sin(theta)]' * diag(radii) * [cos(angle), -sin(angle); sin(angle), cos(angle)];
+    XData = stateEstimate(1) + ellipse(:, 1);
+    YData = stateEstimate(2) + ellipse(:, 2);
 end
