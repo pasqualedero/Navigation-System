@@ -440,24 +440,6 @@ show(mapObstacle);
 plot(posePP(:,1),posePP(:,2),'r.');
 plot(trajectory(:,1),trajectory(:,2))
 
-function [distMin, idx] = getClosestPointIndex(reference, queryPoint)
-    % reference: Nx3 matrix [x, y, theta]
-    % queryPoint: 1x2 [x, y] or 1x3 [x, y, theta] vector
-    
-    % 1. Extract only X and Y columns for distance calculation
-    refXY = reference(:, 1:2);
-    ptXY = queryPoint(1:2);
-    
-    % 2. Calculate Squared Euclidean Distance (Vectorized)
-    % (x_ref - x_pt)^2 + (y_ref - y_pt)^2
-    % We use squared distance because it is faster (no sqrt) and 
-    % preserves the minimum.
-    diffs = refXY - ptXY;
-    distSq = sqrt(sum(diffs.^2, 2));
-    
-    % 3. Find the index of the minimum distance
-    [distMin, idx] = min(distSq);
-end
 waitforbuttonpress;
 
 %% ----------------- Localization (orig. map) -----------------------------
@@ -636,36 +618,3 @@ ylabel('Norm Value')
 grid on
 hold off
 
-
-function observations = simulateLandmarkObservations(truePose, landmarks, R)
-    % Simulates sensor data: Returns [ID, Range, Bearing] for visible landmarks
-    maxRange = 10; % Set your sensor range limit here
-    observations = [];
-    
-    for i = 1:size(landmarks, 1)
-        dx = landmarks(i, 1) - truePose(1); 
-        dy = landmarks(i, 2) - truePose(2);
-        
-        % True Distance with Sensor Noise
-        r = sqrt(dx^2 + dy^2) + normrnd(0,R(1,1));
-        
-        if r < maxRange
-            % True Bearing with Sensor Noise
-            bearing = atan2(dy, dx) - truePose(3) + normrnd(0,R(2,2));
-            observations = [observations; i, r, bearing];
-        end
-    end
-end
-
-%% Funzione per visualizzare la covarianza
-function [XData, YData] = plotCovariance(stateEstimate, P)
-    % Ellissi di covarianza per la posizione del robot
-    posCov = P(1:2, 1:2);
-    [eigVec, eigVal] = eig(posCov);
-    angle = atan2(eigVec(2, 1), eigVec(1, 1));
-    radii = 10*sqrt(diag(eigVal));
-    theta = linspace(0, 2 * pi, 100);
-    ellipse = [cos(theta); sin(theta)]' * diag(radii) * [cos(angle), -sin(angle); sin(angle), cos(angle)];
-    XData = stateEstimate(1) + ellipse(:, 1);
-    YData = stateEstimate(2) + ellipse(:, 2);
-end
