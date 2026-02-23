@@ -242,7 +242,7 @@ for idx = 2:length(tVec)
     set(mpcPath, 'XData', pose(1:idx,1), 'YData', pose(1:idx,2)); 
     set(trajPred, 'XData', trajectory(idx:idx+p-1,1), 'YData', trajectory(idx:idx+p-1,2))
     drawnow limitrate;
-    %waitfor(r);
+    waitfor(r);
 end
 legend([mpcPath,traj,robotMpc], 'Trajectory', 'Ref. Path' , 'Robot Position')
 hold off;
@@ -475,7 +475,7 @@ for i = 2 : length(tVec)
             set(avoidancePath, 'XData', poseOA(1:idxOA,1), 'YData', poseOA(1:idxOA,2));
             set(mpcPath, 'XData', poseMPC(1:idxMPC,1), 'YData', poseMPC(1:idxMPC,2))
             drawnow limitrate;
-            % waitfor(r);
+            waitfor(r);
 
             % Update Pose index
             idxPose = idxPose+1;
@@ -508,7 +508,7 @@ for i = 2 : length(tVec)
     set(avoidancePath, 'XData', poseOA(1:idxOA,1), 'YData', poseOA(1:idxOA,2));
     set(mpcPath, 'XData', poseMPC(1:idxMPC,1), 'YData', poseMPC(1:idxMPC,2));    
     drawnow limitrate;
-    % waitfor(r);
+    waitfor(r);
    
     % Update
     idxRef = idxRef + 1;
