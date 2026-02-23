@@ -11,10 +11,27 @@ map = binaryOccupancyMap(~origImageMap, resolution);
 start = [26 17 -pi/2];
 goal = [0.3 17 pi/2];
 
+% Define the radius/width of the area you want to clear (in meters)
+clearSize = 1.0; 
+
+% Clear start and goal points
+[x_s, y_s] = meshgrid(26-clearSize : 0.001 : 26+clearSize, ...
+                      19-clearSize : 0.001 : 19+clearSize);
+setOccupancy(map, [x_s(:), y_s(:)], 0); 
+
+[x_g, y_g] = meshgrid(0.3-clearSize : 0.001 : 0.3+clearSize, ...
+                      19-clearSize : 0.001 : 19+clearSize);
+setOccupancy(map, [x_g(:), y_g(:)], 0);
+
 figure;
+hold on
 show(map)
-grid on;
+plot(start(1), start(2), 'Marker','.','Color','g', 'MarkerSize',10)
+plot(goal(1), goal(2), 'Marker','.','Color','r','MarkerSize',10)
 title('Workspace of the Robot');
+grid on;
+set(gca, 'Layer', 'top');
+hold off
 
 % Inflate the map
 inflatedMap = copy(map);
@@ -79,7 +96,7 @@ refPath = computeRefAngle(refPath.States, refPath.States(1,3));
 figure;
 show(planner);
 grid on;
-title('Hybrid A* Path Planning');
+title('Hybrid A* Path Planning on Inflated Map');
 
 %% Apply A*
 
@@ -91,9 +108,12 @@ pathAstar = grid2world(inflatedMap,aStar.path);
 
 % Visualize the A* path on the inflated map
 figure
-show(inflatedMap);
+show(map);
 hold on;
+title('A^* Algorithm and Generated Path')
 plot(pathAstar(:,1), pathAstar(:,2), 'g', 'LineWidth', 2);
+legend('Generated Path')
+grid on;
 hold off;
 
 % plot A* on image normal + inflated
@@ -124,7 +144,7 @@ theta_ref = interp1(s, refPath(:,3), s_interp, 'linear');
 
 ref = [x_ref(:), y_ref(:), theta_ref(:)];
 
-%% NLMPC
+%% ----------------------- NLMPC ------------------------------------------
 nx = 3;
 ny = 3;
 nu = 3;
@@ -141,19 +161,17 @@ nlmpcController.Model.StateFcn = @(x,u) FourWheelSteerDyn(x,u,Ts);
 nlmpcController.Model.IsContinuousTime = false;
 
 % weights
-% wheights MV has second component high because the 4WheelSteer doesnt take
-% into account vy to compute inverse kinematics
 nlmpcController.Weights.ManipulatedVariables = [30,50,1];
 nlmpcController.Weights.ManipulatedVariablesRate = [10,10,10];
 nlmpcController.Weights.OutputVariables = [200, 100, 50];
 
-% x
+% vx
 nlmpcController.MV(1).Max = 0.9;
 nlmpcController.MV(1).Min = -0.9;
 nlmpcController.MV(1).RateMax = 0.2;
 nlmpcController.MV(1).RateMin = -0.2;
 
-% y
+% vy
 nlmpcController.MV(2).Max = 0.9;
 nlmpcController.MV(2).Min = -0.9;
 nlmpcController.MV(2).RateMax = 0.2;
@@ -173,11 +191,15 @@ trajectory(end+1:end+p,:) = repmat(trajectory(end,:),[p 1]);
 
 % Initialize the pose array for storing the robot's position
 pose = zeros(length(tVec),3);
-pose(1,:) = start; % Set the initial pose to the starting position
+pose(1,:) = start; 
 u = zeros(length(tVec),nu);
 
 wheelSpds = zeros(length(tVec),2);
 steerAngFS = zeros(length(tVec),2);
+
+errX = zeros(length(tVec),1);
+errY = zeros(length(tVec),1);
+errTheta = zeros(length(tVec),1);
 
 % Dynamic Plot
 figure
@@ -190,7 +212,11 @@ headXmpc = pose(1,1) + module * cos(pose(1,3));
 headYmpc = pose(1,2) + module * sin(pose(1,3));
 headingMpc = plot([pose(1,1) headXmpc], [pose(1,2) headYmpc], 'LineStyle','-.','Color','black','LineWidth',2);
 mpcPath = plot(nan, nan,'r.', 'Color','b');
-plot(trajectory(:,1),trajectory(:,2), 'LineStyle','--');
+trajPred = plot(nan, nan, 'LineStyle','none','Marker','square','MarkerSize',8);
+traj = plot(trajectory(:,1),trajectory(:,2), 'LineStyle','--');
+plot(start(1), start(2), 'Marker','.','Color','g', 'MarkerSize',10)
+plot(goal(1), goal(2), 'Marker','.','Color','r','MarkerSize',10)
+title('Path-Following: NLMPC (Cascaded Kinematic Control)')
 
 for idx = 2:length(tVec)
 
@@ -203,62 +229,119 @@ for idx = 2:length(tVec)
     vel = bodyToWorld(velBody,pose(idx-1,:));
     pose(idx,:) = pose(idx-1,:) + vel' .* Ts;
 
+    % Calculate errors
+    errX(idx) = (trajectory(idx,1) - pose(idx,1));
+    errY(idx) = (trajectory(idx,2) - pose(idx,2));
+    errTheta(idx) = (angdiff(trajectory(idx,3), pose(idx,3)));
+
     % Update plots
     set(robotMpc, 'XData', pose(idx,1), 'YData', pose(idx,2));
     headXmpc = pose(idx,1) + module * cos(pose(idx,3));
     headYmpc = pose(idx,2) + module * sin(pose(idx,3));
     set(headingMpc, 'XData', [pose(idx,1) headXmpc], 'YData', [pose(idx,2) headYmpc]);
-    set(mpcPath, 'XData', pose(1:idx,1), 'YData', pose(1:idx,2));    
+    set(mpcPath, 'XData', pose(1:idx,1), 'YData', pose(1:idx,2)); 
+    set(trajPred, 'XData', trajectory(idx:idx+p-1,1), 'YData', trajectory(idx:idx+p-1,2))
     drawnow limitrate;
     %waitfor(r);
 end
+legend([mpcPath,traj,robotMpc], 'Trajectory', 'Ref. Path' , 'Robot Position')
+hold off;
 
 %% Plots (NLMPC)
 
 figure
 hold on
-% Plot the trajectory's theta-coordinate over time
 plot(1:length(trajectory), trajectory(:,3), 'b', 'LineWidth', 2);
 xlabel('Time Step');
 ylabel('\theta Coordinate');
 title('Trajectory \theta Coordinate Over Time');
-% Finalize the trajectory visualization by plotting the robot's pose
 plot(1:length(pose), pose(:,3), 'r', 'LineWidth',2)
-legend('reference','actual angle')
+legend('reference angle','actual angle (World Ref. Frame)')
 grid on;
 hold off;
 
 figure
 hold on
-subplot(3,3,[1 2 3])
-plot(tVec,steerAngFS(:,1),'LineWidth',2);
-title("Front Steering Angle")
+subplot(4,3,[1 2 3])
+hold on
+plot(tVec,steerAngFS(:,1),'LineWidth',2, 'Color','g');
+plot(tVec,steerAngFS(:,2),'LineWidth',2,'Color','r')
+legend('\phi_f','\phi_r')
+title("Front and Rear Steering Angle: \phi_r, \phi_f")
 ylabel('[rad]')
 grid on
 hold off
+hold off
 
-subplot(3,3,[4 5 6])
+subplot(4,3,[4 5 6])
 hold on
 plot(tVec,wheelSpds(:,1),'LineWidth',2,'Color','r');
 plot(tVec,wheelSpds(:,2),'LineWidth',2,'Color','b');
 legend('Front Wheel','Rear Wheel')
 ylabel('[rad/s]')
-title('Wheel Speeds')
+title('Wheel Speeds (Body Frame)')
 grid on
 hold off
 
-subplot(3,3,[7,8,9])
+subplot(4,3,[7,8,9])
 hold on
 plot(tVec,u(:,1),'LineWidth',2,'Color','r')
 plot(tVec,u(:,2),'LineWidth',2,'Color','b')
-legend('V_x','V_y')
+yline(nlmpcController.MV(1).Max, 'LineStyle','--')
+yline(nlmpcController.MV(1).Min, 'LineStyle','--')
+legend('V_x','V_y','Upper Limit','Lower Limit')
 ylabel('[m/s]')
-title('Control Input')
+title('v_x and v_y')
 grid on
 hold off
 
-disp('Press any key to continue')
+subplot(4,3,[10,11,12])
+hold on
+title('Angular Velocity \omega')
+plot(tVec,u(:,3),'LineWidth',2,'Color','r')
+yline(nlmpcController.MV(3).Max, 'LineStyle','--')
+yline(nlmpcController.MV(3).Min, 'LineStyle','--')
+legend('\omega','Upper Limit','Lower Limit')
+ylabel('rad/s')
+xlabel('Time [s]')
+grid on
+hold off
+
+% Tracking Errors Plot
+figure('Name', 'Tracking Errors');
+
+% X Error
+subplot(3,1,1)
+plot(tVec, errX, 'LineWidth', 1.5, 'Color', 'blue') 
+title('Longitudinal Tracking Error (X)')
+ylabel('Error [m]')
+ylim([-0.5 0.5])
+yticks(-0.5:0.2:0.5)
+grid on
+
+% Y Error
+subplot(3,1,2)
+plot(tVec, errY, 'LineWidth', 1.5, 'Color', 'blue') 
+title('Lateral Tracking Error (Y)')
+ylabel('Error [m]')
+ylim([-0.5 0.5])
+yticks(-0.5:0.2:0.5)
+grid on
+
+% Theta Error
+subplot(3,1,3)
+plot(tVec, errTheta, 'LineWidth', 1.5, 'Color', 'blue') 
+title('Heading Tracking Error (\theta)')
+xlabel('Time [s]')
+ylabel('Error [rad]')
+ylim([-0.5 0.5])
+yticks(-0.5:0.2:0.5)
+grid on
+
+
 waitforbuttonpress
+
+%%--------------------- Obstacle Avoidance --------------------------------
 
 %% Lidar Sensor 
 lidar = rangeSensor;
@@ -319,7 +402,9 @@ poseMPC = zeros(600,2);
 figure
 hold on
 show(mapObstacle)
-robot = plot(posePP(1,1),posePP(1,2), 'Color','b','Marker','o','MarkerSize',10);
+set(gca,'Layer','Top')
+grid on
+robot = plot(posePP(1,1),posePP(1,2), 'Color','r','Marker','.','MarkerSize',33, 'MarkerEdgeColor','auto');
 wayP = plot(waypoints(:,1),waypoints(:,2),'r.','Color','r','Marker','x');
 lidarPlot = plot(nan, nan,'r.','MarkerSize', 8);
 module = 1;
@@ -329,6 +414,7 @@ heading = plot([posePP(1,1) headX], [posePP(1,2) headY], 'LineStyle','-.','Color
 headingVFH = plot(nan,nan,'LineStyle','-.','Color','m');
 avoidancePath = plot(nan, nan,'r.', 'Color','g');
 mpcPath = plot(nan, nan,'r.', 'Color','b');
+title('NLMPC + Pure Pursuit Control with VFH Integration')
 
 %% Loop
 idxPose = 2;
@@ -361,20 +447,17 @@ for i = 2 : length(tVec)
             scan = lidarScan(ranges, angles);
 
             % Run the path following and obstacle avoidance algorithms
-            [vRef,wRef,lookAheadPt] = controller(curPose);
-            uPP(idxPose,:) = vRef';
+            [vRef,wRef,lookAheadPt] = controller(curPose);         
             targetDir = atan2(lookAheadPt(2)-curPose(2),lookAheadPt(1)-curPose(1)) - curPose(3);
             steerDir = vfh(scan.Ranges,scan.Angles,targetDir);
+            
             if ~isnan(steerDir) && abs(angdiff(targetDir, steerDir)) > 0.1
                 wRef = 1 * steerDir;
             end
-            disp(abs(angdiff(targetDir, steerDir)))
-
-            % Control the robot
-            % velB = [vRef * cos(wRef); vRef * sin(wRef); wRef];                   % Body velocities [vx;vy;w]
-            % vel = bodyToWorld(velB,curPose);  % Convert from body to world
+           
             [wheelSpdsPP(idxPose,:), steerAngFSPP(idxPose,:)] = inverseKinematicsFrontSteer(vehicle, vRef, wRef);
             velB = forwardKinematics(vehicle,wheelSpdsPP(idxPose,:),steerAngFSPP(idxPose,:));
+            uPP(idxPose,:) = velB;
             vel = bodyToWorld(velB, curPose);
 
             % Perform forward discrete integration step
@@ -411,7 +494,7 @@ for i = 2 : length(tVec)
     %Run the NLPMC
     [uPP(idxPose,:),~,mpcinfo] = nlmpcmove(nlmpcController, posePP(idxPose-1,:), uPP(idxPose-1,:), trajectory(idxRef:idxRef+p-1,:));
     [wheelSpdsPP(idxPose,:), steerAngFSPP(idxPose,:)] = inverseKinematicsFrontSteer(vehicle, uPP(idxPose,1), uPP(idxPose,3));
-    % If no noise, vel == u(idx,:)
+   
     velBody = forwardKinematics(vehicle,wheelSpdsPP(idxPose,:),steerAngFSPP(idxPose,:));
     vel = bodyToWorld(velBody,posePP(idxPose-1,:));
     posePP(idxPose,:) = posePP(idxPose-1,:) + vel' .* Ts;
@@ -434,11 +517,8 @@ for i = 2 : length(tVec)
     
 end
 
-figure
-hold on
-show(mapObstacle);
-plot(posePP(:,1),posePP(:,2),'r.');
-plot(trajectory(:,1),trajectory(:,2))
+legend([mpcPath,avoidancePath,wayP,robot], 'MPC Trajectory', 'Pure Pursuit Traj.', 'Waypoints' , 'Robot Position')
+hold off;
 
 waitforbuttonpress;
 
@@ -484,14 +564,12 @@ landmarks = [
 
 numLandmarks = size(landmarks, 1);
 
-% 2. EKF-SLAM Initialization
 % Initial Pose
 start = start';
 trueStates = zeros(length(tVec), 3);
 trueStates(1, :) = start;
 
-% Extended State: [x; y; theta; L1x; L1y; ... Lnx; Lny]
-% Initialize landmarks as NaN (unknown)
+% Extended State
 stateEstimate = [start(:); NaN(2 * numLandmarks, 1)]; 
 
 % Storage for History 
@@ -505,16 +583,14 @@ predictedStates(1, :) = stateEstimate';
 P = eye(3 + 2 * numLandmarks) * 1e-5; 
 P(1:3, 1:3) = eye(3) * 0.1; % Robot pose uncertainty
 
-Q = blkdiag(diag([0.0005, 0.0005, 0.0005]), zeros(2 * numLandmarks)); % Process Noise
-R = diag([0.05, 0.01]); % Measurement Noise (Range, Bearing)
+Q = blkdiag(diag([0.05, 0.05, 0.005]), zeros(2 * numLandmarks)); % Process Noise
+R = diag([0.005, 0.001]); % Measurement Noise 
 
 Pcell = cell(1,length(tVec));
 Pcell{1} = P;
 
 % Control Inputs
 uEFK = zeros(length(tVec), 3); % [vx, vy, omega]
-
-disp('EKF-SLAM Initialized. Starting Simulation Loop...');
 
 % Plots
 figure
@@ -533,6 +609,7 @@ plotCorr = plot(correctedStates(1,1), correctedStates(1,2), 'Color','g','LineSty
 [XDataCov, YDataCov] = plotCovariance(stateEstimate, P);
 plotCov = plot(XDataCov, YDataCov, 'Color','black','LineWidth',1.5);
 %plot(trajectory(:,1),trajectory(:,2), 'LineStyle','-');
+title('EKF-SLAM')
 
 
 % Main Simulation Loop
@@ -587,8 +664,6 @@ legend([plotCorr, plotPred, robotEkf, landmarksLoc], ...
     {'Estimated Path (EKF)', 'Predicted Path', 'True Robot Position', 'Landmarks Est.'});
 hold off;
 
-disp('Simulation Complete.');
-
 % Compute trace of Covariance Matrices and norm of estimation error for the robot's pose
 traces = zeros(1,length(Pcell));
 estErrors = zeros(1,length(Pcell));
@@ -605,16 +680,39 @@ figure
 hold on
 subplot(2,2,[1 2])
 title("Trace of Covariance Matrix P")
-plot(1:length(tVec),traces(1,:), 'LineWidth', 3)
-xlabel('N° of iterations')
+plot(tVec,traces(1,:), 'LineWidth', 3)
+xlabel('Time [s]')
 ylabel('Trace of P')
 grid on
 
 subplot(2,2,[3 4])
 title('Norm of state Error')
-plot(1:length(tVec),estErrors(1,:), 'LineWidth', 3)
-xlabel('N° of iterations')
+plot(tVec,estErrors(1,:), 'LineWidth', 3)
+xlabel('Time [s]')
 ylabel('Norm Value')
 grid on
 hold off
+
+error_x = correctedStates(:, 1) - trueStates(:, 1);
+error_y = correctedStates(:, 2) - trueStates(:, 2);
+error_theta = correctedStates(:, 3) - trueStates(:, 3);
+error_theta = atan2(sin(error_theta), cos(error_theta));
+
+figure;
+title('EKF-SLAM: Individual State Estimation Errors'); 
+subplot(3,1,1)
+plot(tVec, error_x, 'LineWidth', 1.5)
+ylabel('Error [m]')
+grid on
+
+subplot(3,1,2)
+plot(tVec, error_y, 'LineWidth', 1.5)
+ylabel('Error [m]')
+grid on
+
+subplot(3,1,3)
+plot(tVec, error_theta, 'LineWidth', 1.5)
+xlabel('Time [s]')
+ylabel('\theta Error [rad]')
+grid on
 
